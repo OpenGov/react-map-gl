@@ -482,11 +482,13 @@ export default class MapGL extends Component {
   }
 
   @autobind _onMouseMove(opt) {
-    const map = this._getMap();
-    const pos = opt.pos;
     if (!this.props.onHoverFeatures) {
       return;
     }
+
+    const map = this._getMap();
+    const pos = opt.pos;
+
     const features = map.queryRenderedFeatures([pos.x, pos.y]);
     if (!features.length && this.props.ignoreEmptyFeatures) {
       return;
@@ -495,6 +497,10 @@ export default class MapGL extends Component {
   }
 
   @autobind _onMouseUp(opt) {
+    if (!this.props.onClickFeatures) {
+      return;
+    }
+
     const map = this._getMap();
     this._callOnChangeViewport(map.transform, {
       isDragging: false,
@@ -502,10 +508,6 @@ export default class MapGL extends Component {
       startBearing: null,
       startPitch: null
     });
-
-    if (!this.props.onClickFeatures) {
-      return;
-    }
 
     const pos = opt.pos;
 
