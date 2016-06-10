@@ -126,9 +126,12 @@ export default class MapInteractions extends Component {
   _onWheel(event) {
     // the following have been disabled because they eliminate
     // the ability to scroll selects/select-like elements in popups
+    if (this.props.zoomDisabled) {
+      return;
+    }
 
-    // event.stopPropagation();
-    // event.preventDefault();
+    event.stopPropagation();
+    event.preventDefault();
     let value = event.deltaY;
     // Firefox doubles the values on retina screens...
     if (firefox && event.deltaMode === window.WheelEvent.DOM_DELTA_PIXEL) {

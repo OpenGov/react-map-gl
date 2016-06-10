@@ -582,7 +582,9 @@ export default class MapGL extends Component {
           onZoom ={ this._onZoom }
           onZoomEnd ={ this._onZoomEnd }
           width ={ this.props.width }
-          height ={ this.props.height }>
+          height ={ this.props.height }
+          zoomDisabled ={ this.props.zoomDisabled }
+          dragDisabled ={ this.props.dragDisabled }>
 
           { content }
 
