@@ -152,7 +152,17 @@ const PROP_TYPES = {
     * Unit: map heights, default 1.5
     * Non-public API, see https://github.com/mapbox/mapbox-gl-js/issues/1137
     */
-  altitude: React.PropTypes.number
+  altitude: React.PropTypes.number,
+
+  /**
+    * Disabled dragging of the map
+    */
+  dragDisabled: React.PropTypes.bool,
+
+  /**
+    * Disabled zooming of the map
+    */
+  zoomDisabled: React.PropTypes.bool,
 };
 
 const DEFAULT_PROPS = {
@@ -436,7 +446,7 @@ export default class MapGL extends Component {
   }
 
   @autobind _onMouseDrag({pos}) {
-    if (!this.props.onChangeViewport) {
+    if (!this.props.onChangeViewport || this.props.dragDisabled) {
       return;
     }
 
@@ -522,6 +532,10 @@ export default class MapGL extends Component {
   }
 
   @autobind _onZoom({pos, scale}) {
+    if (this.props.zoomDisabled) {
+      return;
+    }
+
     const map = this._getMap();
     const transform = cloneTransform(map.transform);
     const around = unprojectFromTransform(transform, pos);
