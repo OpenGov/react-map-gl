@@ -351,7 +351,7 @@ export default class MapGL extends Component {
       newProps.longitude !== oldProps.longitude ||
       newProps.zoom !== oldProps.zoom ||
       newProps.pitch !== oldProps.pitch ||
-      newProps.zoom !== oldProps.bearing ||
+      newProps.bearing !== oldProps.bearing ||
       newProps.altitude !== oldProps.altitude;
 
     const map = this._getMap();
