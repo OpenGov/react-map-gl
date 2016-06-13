@@ -163,6 +163,11 @@ const PROP_TYPES = {
     * Disabled zooming of the map
     */
   zoomDisabled: React.PropTypes.bool,
+
+  /**
+    * Bounds to fit on screen
+    */
+  bounds: React.PropTypes.array,
 };
 
 const DEFAULT_PROPS = {
@@ -371,6 +376,10 @@ export default class MapGL extends Component {
       if (newProps.altitude !== oldProps.altitude) {
         map.transform.altitude = newProps.altitude;
       }
+    }
+
+    if (oldProps.bounds !== newProps.bounds && newProps.bounds) {
+      map.fitBounds(newProps.bounds.toJS(), {padding: 45, maxZoom: 19});
     }
   }
 
