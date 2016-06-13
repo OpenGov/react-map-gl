@@ -213,6 +213,9 @@ export default class MapGL extends Component {
     this._map = map;
     this._updateMapViewport({}, this.props);
     this._callOnChangeViewport(map.transform);
+    // support for external manipulation of underlying map // TODO a better approach
+    map.on('moveend', () => this._callOnChangeViewport(map.transform));
+    map.on('zoomend', () => this._callOnChangeViewport(map.transform));
   }
 
   // New props are comin' round the corner!
