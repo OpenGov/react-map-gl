@@ -71,13 +71,23 @@ const PROP_TYPES = {
     */
   onChangeViewport: PropTypes.func,
   /**
-    * The width of the map.
+    * `onMapLoaded` callback is fired on the map's 'load' event
     */
-  width: PropTypes.number.isRequired,
+  onMapLoaded: PropTypes.func,
   /**
-    * The height of the map.
+    * The width of the map. Number in pixels or CSS string prop e.g. '100%'
     */
-  height: PropTypes.number.isRequired,
+  width: PropTypes.oneOfType([
+    PropTypes.number,
+    PropTypes.string
+  ]),
+  /**
+    * The height of the map. Number in pixels or CSS string prop e.g. '100%'
+    */
+  height: PropTypes.oneOfType([
+    PropTypes.number,
+    PropTypes.string
+  ]),
   /**
     * Is the component currently being dragged. This is used to show/hide the
     * drag cursor. Also used as an optimization in some overlays by preventing
@@ -140,34 +150,34 @@ const PROP_TYPES = {
   /**
     * Specify the bearing of the viewport
     */
-  bearing: React.PropTypes.number,
+  bearing: PropTypes.number,
 
   /**
     * Specify the pitch of the viewport
     */
-  pitch: React.PropTypes.number,
+  pitch: PropTypes.number,
 
   /**
     * Specify the altitude of the viewport camera
     * Unit: map heights, default 1.5
     * Non-public API, see https://github.com/mapbox/mapbox-gl-js/issues/1137
     */
-  altitude: React.PropTypes.number,
+  altitude: PropTypes.number,
 
   /**
     * Disabled dragging of the map
     */
-  dragDisabled: React.PropTypes.bool,
+  dragDisabled: PropTypes.bool,
 
   /**
     * Disabled zooming of the map
     */
-  zoomDisabled: React.PropTypes.bool,
+  zoomDisabled: PropTypes.bool,
 
   /**
     * Bounds to fit on screen
     */
-  bounds: React.PropTypes.array,
+  bounds: PropTypes.instanceOf(Immutable.List)
 };
 
 const DEFAULT_PROPS = {
@@ -182,6 +192,10 @@ const DEFAULT_PROPS = {
   altitude: 1.5
 };
 
+const CHILD_CONTEXT_TYPES = {
+  map: React.PropTypes.object
+};
+
 @pureRender
 export default class MapGL extends Component {
 
@@ -194,6 +208,12 @@ export default class MapGL extends Component {
       startPitch: null
     };
     mapboxgl.accessToken = props.mapboxApiAccessToken;
+
+    this._mapReady = false;
+
+    this.getChildContext = () => ({
+      map: this._map
+    });
   }
 
   componentDidMount() {
@@ -218,7 +238,14 @@ export default class MapGL extends Component {
     this._map = map;
     this._updateMapViewport({}, this.props);
     this._callOnChangeViewport(map.transform);
-    // support for external manipulation of underlying map // TODO a better approach
+
+    if (this.props.onMapLoaded) {
+      map.on('load', () => this.props.onMapLoaded(map));
+    }
+
+    // support for external manipulation of underlying map
+    // TODO a better approach
+    map.on('style.load', () => this._mapReady = true);
     map.on('moveend', () => this._callOnChangeViewport(map.transform));
     map.on('zoomend', () => this._callOnChangeViewport(map.transform));
   }
@@ -427,6 +454,8 @@ export default class MapGL extends Component {
    // Helper to call props.onChangeViewport
   _callOnChangeViewport(transform, opts = {}) {
     if (this.props.onChangeViewport) {
+      const {scrollHeight: height, scrollWidth: width} = this._getMap().getContainer();
+
       this.props.onChangeViewport({
         latitude: transform.center.lat,
         longitude: mod(transform.center.lng + 180, 360) - 180,
@@ -440,6 +469,9 @@ export default class MapGL extends Component {
         startPitch: this.props.startPitch,
 
         projectionMatrix: transform.projMatrix,
+
+        height,
+        width,
 
         ...opts
       });
@@ -645,4 +677,5 @@ function cloneTransform(original) {
 }
 
 MapGL.propTypes = PROP_TYPES;
+MapGL.childContextTypes = CHILD_CONTEXT_TYPES;
 MapGL.defaultProps = DEFAULT_PROPS;
