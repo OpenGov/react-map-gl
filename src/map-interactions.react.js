@@ -44,8 +44,14 @@ function mousePos(el, event) {
 /* eslint-enable max-len */
 
 const PROP_TYPES = {
-  width: PropTypes.number.isRequired,
-  height: PropTypes.number.isRequired,
+  width: PropTypes.oneOfType([
+    PropTypes.number,
+    PropTypes.string
+  ]),
+  height: PropTypes.oneOfType([
+    PropTypes.number,
+    PropTypes.string
+  ]),
   onMouseDown: PropTypes.func,
   onMouseDrag: PropTypes.func,
   onMouseRotate: PropTypes.func,

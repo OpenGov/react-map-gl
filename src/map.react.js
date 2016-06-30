@@ -406,7 +406,7 @@ export default class MapGL extends Component {
     }
 
     if (oldProps.bounds !== newProps.bounds && newProps.bounds) {
-      map.fitBounds(newProps.bounds.toJS(), {padding: 45, maxZoom: 19});
+      map.fitBounds(newProps.bounds.toJS());
     }
   }
 
