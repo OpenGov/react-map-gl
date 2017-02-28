@@ -17,43 +17,38 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-'use strict';
 
-var React = require('react');
-var r = require('r-dom');
-var assign = require('object-assign');
+import React, {PropTypes, Component} from 'react';
+import ViewportMercator from 'viewport-mercator-project';
 
-var HTMLOverlay = React.createClass({
+export default class HTMLOverlay extends Component {
 
-  displayName: 'HTMLOverlay',
+  static propTypes = {
+    width: PropTypes.number.isRequired,
+    height: PropTypes.number.isRequired,
+    redraw: PropTypes.func.isRequired,
+    isDragging: PropTypes.bool.isRequired
+    // TODO: style
+  };
 
-  propTypes: {
-    width: React.PropTypes.number.isRequired,
-    height: React.PropTypes.number.isRequired,
-    redraw: React.PropTypes.func.isRequired,
-    project: React.PropTypes.func.isRequired,
-    isDragging: React.PropTypes.bool.isRequired
-  },
-
-  render: function render() {
-    var style = assign({}, {
+  render() {
+    const {width, height, isDragging} = this.props;
+    const style = {
       position: 'absolute',
       pointerEvents: 'none',
-      width: this.props.width,
-      height: this.props.height,
       left: 0,
-      top: 0
-    }, this.props.style);
-    return r.div({
-      ref: 'overlay',
-      style: style
-    }, this.props.redraw({
-      width: this.props.width,
-      height: this.props.height,
-      project: this.props.project,
-      isDragging: this.props.isDragging
-    }));
-  }
-});
+      top: 0,
+      width,
+      height,
+      ...this.props.style
+    };
+    const mercator = ViewportMercator(this.props);
+    const {project, unproject} = mercator;
 
-module.exports = HTMLOverlay;
+    return (
+      <div ref="overlay" style={ style }>
+        { this.props.redraw({width, height, project, unproject, isDragging}) }
+      </div>
+    );
+  }
+}

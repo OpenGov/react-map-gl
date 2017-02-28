@@ -17,619 +17,698 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-'use strict';
+import React, {PropTypes, Component} from 'react';
+import autobind from 'autobind-decorator';
+import pureRender from 'pure-render-decorator';
 
-var assert = require('assert');
-var React = require('react');
-var r = require('r-dom');
-var d3 = require('d3');
-var assign = require('object-assign');
-var Immutable = require('immutable');
-var mapboxgl = require('mapbox-gl');
-var LngLatBounds = mapboxgl.LngLatBounds;
-var Point = mapboxgl.Point;
+import mapboxgl, {Point} from 'mapbox-gl';
+import {select} from 'd3-selection';
+import Immutable from 'immutable';
+import assert from 'assert';
 
-// NOTE: Transform is not a public API so we should be careful to always lock
-// down mapbox-gl to a specific major, minor, and patch version.
-var Transform = require('mapbox-gl/js/geo/transform');
+import MapInteractions from './map-interactions.react';
+import config from './config';
 
-var config = require('./config');
-var MapInteractions = require('./map-interactions.react');
+import {getInteractiveLayerIds} from './utils/style-utils';
+import diffStyles from './utils/diff-styles';
+import {mod, unprojectFromTransform, cloneTransform} from './utils/transform';
 
-function mod(value, divisor) {
-  var modulus = value % divisor;
-  return modulus < 0 ? divisor + modulus : modulus;
-}
+function noop() {}
 
-function unprojectFromTransform(transform, point) {
-  return transform.pointLocation(Point.convert(point));
-}
+// Note: Max pitch is a hard coded value (not a named constant) in transform.js
+const MAX_PITCH = 60;
+const PITCH_MOUSE_THRESHOLD = 20;
+const PITCH_ACCEL = 1.2;
 
-function cloneTransform(original) {
-  var transform = new Transform(original._minZoom, original._maxZoom);
-  transform.latRange = original.latRange;
-  transform.width = original.width;
-  transform.height = original.height;
-  transform.zoom = original.zoom;
-  transform.center = original.center;
-  transform.angle = original.angle;
-  transform.altitude = original.altitude;
-  transform.pitch = original.pitch;
-  return transform;
-}
+const PROP_TYPES = {
+  /**
+    * The latitude of the center of the map.
+    */
+  latitude: PropTypes.number.isRequired,
+  /**
+    * The longitude of the center of the map.
+    */
+  longitude: PropTypes.number.isRequired,
+  /**
+    * The tile zoom level of the map.
+    */
+  zoom: PropTypes.number.isRequired,
+  /**
+    * The maximum tile zoom level of the map. Defaults to 20.
+    * Increasing this will allow you to zoom further into the map but should
+    * only be used if you know what you are doing past zoom 20. The default
+    * map styles won't render anything useful past 20.
+    */
+  maxZoom: PropTypes.number,
+  /**
+    * The Mapbox style the component should use. Can either be a string url
+    * or a MapboxGL style Immutable.Map object.
+    */
+  mapStyle: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.instanceOf(Immutable.Map)
+  ]),
+  /**
+    * The Mapbox API access token to provide to mapbox-gl-js. This is required
+    * when using Mapbox provided vector tiles and styles.
+    */
+  mapboxApiAccessToken: PropTypes.string,
+  /**
+    * `onChangeViewport` callback is fired when the user interacted with the
+    * map. The object passed to the callback contains `latitude`,
+    * `longitude` and `zoom` and additional state information.
+    */
+  onChangeViewport: PropTypes.func,
+  /**
+    * The width of the map.
+    */
+  width: PropTypes.number.isRequired,
+  /**
+    * The height of the map.
+    */
+  height: PropTypes.number.isRequired,
+  /**
+    * Is the component currently being dragged. This is used to show/hide the
+    * drag cursor. Also used as an optimization in some overlays by preventing
+    * rendering while dragging.
+    */
+  isDragging: PropTypes.bool,
+  /**
+    * Required to calculate the mouse projection after the first click event
+    * during dragging. Where the map is depends on where you first clicked on
+    * the map.
+    */
+  startDragLngLat: PropTypes.array,
+  /**
+    * Called when a feature is hovered over. Uses Mapbox's
+    * queryRenderedFeatures API to find features under the pointer:
+    * https://www.mapbox.com/mapbox-gl-js/api/#Map#queryRenderedFeatures
+    * To query only some of the layers, set the `interactive` property in the
+    * layer style to `true`. See Mapbox's style spec
+    * https://www.mapbox.com/mapbox-gl-style-spec/#layer-interactive
+    * If no interactive layers are found (e.g. using Mapbox's default styles),
+    * will fall back to query all layers.
+    * @callback
+    * @param {array} features - The array of features the mouse is over.
+    */
+  onHoverFeatures: PropTypes.func,
+  /**
+    * Defaults to TRUE
+    * Set to false to enable onHoverFeatures to be called regardless if
+    * there is an actual feature at x, y. This is useful to emulate
+    * "mouse-out" behaviors on features.
+    */
+  ignoreEmptyFeatures: PropTypes.bool,
 
-var MapGL = React.createClass({
+  /**
+    * Show attribution control or not.
+    */
+  attributionControl: PropTypes.bool,
 
-  displayName: 'MapGL',
+  /**
+   * Called when the map is clicked. The handler is called with the clicked
+   * coordinates (https://www.mapbox.com/mapbox-gl-js/api/#LngLat) and the
+   * screen coordinates (https://www.mapbox.com/mapbox-gl-js/api/#PointLike).
+   */
+  onClick: PropTypes.func,
 
-  shouldComponentUpdate: function shouldComponentUpdate(nextProps, nextState) {
-    var allTheSame = Object.keys(nextProps).reduce(function reduce(all, prop) {
-      var same = nextProps[prop] === this.props[prop];
-      return all && same;
-    }.bind(this), true);
+  /**
+    * Called when a feature is clicked on. Uses Mapbox's
+    * queryRenderedFeatures API to find features under the pointer:
+    * https://www.mapbox.com/mapbox-gl-js/api/#Map#queryRenderedFeatures
+    * To query only some of the layers, set the `interactive` property in the
+    * layer style to `true`. See Mapbox's style spec
+    * https://www.mapbox.com/mapbox-gl-style-spec/#layer-interactive
+    * If no interactive layers are found (e.g. using Mapbox's default styles),
+    * will fall back to query all layers.
+    */
+  onClickFeatures: PropTypes.func,
 
-    if (!allTheSame) {
-      return true;
+  /**
+    * Radius to detect features around a clicked point. Defaults to 15.
+    */
+  clickRadius: PropTypes.number,
+
+  /**
+    * Passed to Mapbox Map constructor which passes it to the canvas context.
+    * This is unseful when you want to export the canvas as a PNG.
+    */
+  preserveDrawingBuffer: PropTypes.bool,
+
+  /**
+    * There are still known issues with style diffing. As a temporary stopgap,
+    * add the option to prevent style diffing.
+    */
+  preventStyleDiffing: PropTypes.bool,
+
+  /**
+    * Enables perspective control event handling
+    */
+  perspectiveEnabled: PropTypes.bool,
+
+  /**
+    * Specify the bearing of the viewport
+    */
+  bearing: PropTypes.number,
+
+  /**
+    * Specify the pitch of the viewport
+    */
+  pitch: PropTypes.number,
+
+  /**
+    * Specify the altitude of the viewport camera
+    * Unit: map heights, default 1.5
+    * Non-public API, see https://github.com/mapbox/mapbox-gl-js/issues/1137
+    */
+  altitude: PropTypes.number,
+
+  /**
+    * The load callback is called when all dependencies have been loaded and
+    * the map is ready.
+    */
+  onLoad: PropTypes.func
+
+};
+
+const DEFAULT_PROPS = {
+  mapStyle: 'mapbox://styles/mapbox/light-v9',
+  onChangeViewport: null,
+  mapboxApiAccessToken: config.DEFAULTS.MAPBOX_API_ACCESS_TOKEN,
+  preserveDrawingBuffer: false,
+  attributionControl: true,
+  ignoreEmptyFeatures: true,
+  bearing: 0,
+  pitch: 0,
+  altitude: 1.5,
+  clickRadius: 15,
+  maxZoom: 20
+};
+
+@pureRender
+export default class MapGL extends Component {
+
+  static supported() {
+    return mapboxgl.supported();
+  }
+
+  static propTypes = PROP_TYPES;
+  static defaultProps = DEFAULT_PROPS;
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      isSupported: mapboxgl.supported(),
+      isDragging: false,
+      isHovering: false,
+      startDragLngLat: null,
+      startBearing: null,
+      startPitch: null
+    };
+    this._queryParams = {};
+    mapboxgl.accessToken = props.mapboxApiAccessToken;
+
+    if (!this.state.isSupported) {
+      this.componentDidMount = noop;
+      this.componentWillReceiveProps = noop;
+      this.componentDidUpdate = noop;
+    }
+  }
+
+  componentDidMount() {
+    const mapStyle = Immutable.Map.isMap(this.props.mapStyle) ?
+      this.props.mapStyle.toJS() :
+      this.props.mapStyle;
+
+    const map = new mapboxgl.Map({
+      container: this.refs.mapboxMap,
+      center: [this.props.longitude, this.props.latitude],
+      zoom: this.props.zoom,
+      maxZoom: this.props.maxZoom,
+      pitch: this.props.pitch,
+      bearing: this.props.bearing,
+      style: mapStyle,
+      interactive: false,
+      preserveDrawingBuffer: this.props.preserveDrawingBuffer
+      // TODO?
+      // attributionControl: this.props.attributionControl
+    });
+
+    if (this.props.onLoad) {
+      map.once('load', () => this.props.onLoad());
     }
 
-    allTheSame = Object.keys(nextState).reduce(function reduce(all, prop) {
-      var same = nextState[prop] === this.state[prop];
-      return all && same;
-    }.bind(this), true);
+    select(map.getCanvas()).style('outline', 'none');
 
-    return !allTheSame;
-  },
-
-  propTypes: {
-    /**
-      * The latitude of the center of the map.
-      */
-    latitude: React.PropTypes.number.isRequired,
-    /**
-      * The longitude of the center of the map.
-      */
-    longitude: React.PropTypes.number.isRequired,
-    /**
-      * The tile zoom level of the map.
-      */
-    zoom: React.PropTypes.number.isRequired,
-    /**
-      * The Mapbox style the component should use. Can either be a string url
-      * or a MapboxGL style Immutable.Map object.
-      */
-    mapStyle: React.PropTypes.oneOfType([
-      React.PropTypes.string,
-      React.PropTypes.instanceOf(Immutable.Map)
-    ]),
-    /**
-      * The Mapbox API access token to provide to mapbox-gl-js. This is required
-      * when using Mapbox provided vector tiles and styles.
-      */
-    mapboxApiAccessToken: React.PropTypes.string,
-    /**
-      * `onChangeViewport` callback is fired when the user interacted with the
-      * map. The object passed to the callback containers `latitude`,
-      * `longitude` and `zoom` information.
-      */
-    onChangeViewport: React.PropTypes.func,
-    /**
-      * The width of the map.
-      */
-    width: React.PropTypes.number.isRequired,
-    /**
-      * The height of the map.
-      */
-    height: React.PropTypes.number.isRequired,
-    /**
-      * Is the component currently being dragged. This is used to show/hide the
-      * drag cursor. Also used as an optimization in some overlays by preventing
-      * rendering while dragging.
-      */
-    isDragging: React.PropTypes.bool,
-    /**
-      * Required to calculate the mouse projection after the first click event
-      * during dragging. Where the map is depends on where you first clicked on
-      * the map.
-      */
-    startDragLngLat: React.PropTypes.array,
-    /**
-      * Called when a feature is hovered over. Features must set the
-      * `interactive` property to `true` for this to work properly. see the
-      * Mapbox example: https://www.mapbox.com/mapbox-gl-js/example/featuresat/
-      * The first argument of the callback will be the array of feature the
-      * mouse is over. This is the same response returned from `featuresAt`.
-      */
-    onHoverFeatures: React.PropTypes.func,
-    /**
-      * Defaults to TRUE
-      * Set to false to enable onHoverFeatures to be called regardless if
-      * there is an actual feature at x, y. This is useful to emulate
-      * "mouse-out" behaviors on features.
-      */
-    ignoreEmptyFeatures: React.PropTypes.bool,
-
-    /**
-      * Show attribution control or not.
-      */
-    attributionControl: React.PropTypes.bool,
-
-    /**
-      * Called when a feature is clicked on. Features must set the
-      * `interactive` property to `true` for this to work properly. see the
-      * Mapbox example: https://www.mapbox.com/mapbox-gl-js/example/featuresat/
-      * The first argument of the callback will be the array of feature the
-      * mouse is over. This is the same response returned from `featuresAt`.
-      */
-    onClickFeatures: React.PropTypes.func,
-
-    /**
-      * Passed to Mapbox Map constructor which passes it to the canvas context.
-      * This is unseful when you want to export the canvas as a PNG.
-      */
-    preserveDrawingBuffer: React.PropTypes.bool,
-
-    /**
-      * There are still known issues with style diffing. As a temporary stopgap,
-      * add the option to prevent style diffing.
-      */
-    preventStyleDiffing: React.PropTypes.bool
-  },
-
-  getDefaultProps: function getDefaultProps() {
-    return {
-      mapStyle: 'mapbox://styles/mapbox/light-v8',
-      onChangeViewport: null,
-      mapboxApiAccessToken: config.DEFAULTS.MAPBOX_API_ACCESS_TOKEN,
-      preserveDrawingBuffer: false,
-      attributionControl: true,
-      ignoreEmptyFeatures: true
-    };
-  },
-
-  getInitialState: function getInitialState() {
-    var defaultState = {};
-    var stateChanges = this._updateStateFromProps(defaultState, this.props);
-    var state = assign({}, defaultState, stateChanges);
-    return state;
-  },
+    this._map = map;
+    this._updateMapViewport({}, this.props);
+    this._callOnChangeViewport(map.transform);
+    this._updateQueryParams(mapStyle);
+  }
 
   // New props are comin' round the corner!
-  componentWillReceiveProps: function componentWillReceiveProps(newProps) {
-    var stateChanges = this._updateStateFromProps(this.state, newProps);
-    this.setState(stateChanges);
-  },
+  componentWillReceiveProps(newProps) {
+    this._updateStateFromProps(this.props, newProps);
+    this._updateMapViewport(this.props, newProps);
+    this._updateMapStyle(this.props, newProps);
+    // Save width/height so that we can check them in componentDidUpdate
+    this.setState({
+      width: this.props.width,
+      height: this.props.height
+    });
+  }
 
-  _cursor: function _cursor() {
-    var isInteractive = this.props.onChangeViewport ||
+  componentDidUpdate() {
+    // map.resize() reads size from DOM, we need to call after render
+    this._updateMapSize(this.state, this.props);
+  }
+
+  componentWillUnmount() {
+    if (this._map) {
+      this._map.remove();
+    }
+  }
+
+  // External apps can access map this way
+  _getMap() {
+    return this._map;
+  }
+
+  // Calculate a cursor style
+  _getCursor() {
+    const isInteractive =
+      this.props.onChangeViewport ||
       this.props.onClickFeature ||
       this.props.onHoverFeatures;
     if (isInteractive) {
       return this.props.isDragging ?
-        config.CURSOR.GRABBING : config.CURSOR.GRAB;
+        config.CURSOR.GRABBING :
+        (this.state.isHovering ? config.CURSOR.POINTER : config.CURSOR.GRAB);
     }
     return 'inherit';
-  },
+  }
 
-  // Use props to create an object of state changes.
-  _updateStateFromProps: function _updateStateFromProps(state, props) {
-    var stateChanges = {
-      latitude: props.latitude,
-      longitude: props.longitude,
-      zoom: props.zoom,
-      width: props.width,
-      height: props.height,
-      mapStyle: props.mapStyle,
-      startDragLngLat: props.startDragLngLat && props.startDragLngLat.slice()
-    };
-
-    assign(stateChanges, {
-      prevLatitude: state.latitude,
-      prevLongitude: state.longitude,
-      prevZoom: state.zoom,
-      prevWidth: state.width,
-      prevHeight: state.height,
-      prevMapStyle: state.mapStyle
+  _updateStateFromProps(oldProps, newProps) {
+    mapboxgl.accessToken = newProps.mapboxApiAccessToken;
+    this.setState({
+      startDragLngLat: newProps.startDragLngLat
     });
+  }
 
-    mapboxgl.accessToken = props.mapboxApiAccessToken;
+  // Hover and click only query layers whose interactive property is true
+  // If no interactivity is specified, query all layers
+  _updateQueryParams(mapStyle) {
+    const interactiveLayerIds = getInteractiveLayerIds(mapStyle);
+    this._queryParams = interactiveLayerIds.length === 0 ? {} :
+      {layers: interactiveLayerIds};
+  }
 
-    return stateChanges;
-  },
-
-  _onChangeViewport: function _onChangeViewport(_changes) {
-    var map = this._getMap();
-    var center = map.getCenter();
-    var changes = assign({
-      latitude: center.lat,
-      longitude: center.lng,
-      zoom: map.getZoom(),
-      isDragging: this.props.isDragging,
-      startDragLngLat: this.state.startDragLngLat
-    }, _changes);
-    changes.longitude = mod(changes.longitude + 180, 360) - 180;
-    this.props.onChangeViewport(changes);
-  },
-
-  _getMap: function _getMap() {
-    return this._map;
-  },
-
-  componentDidMount: function componentDidMount() {
-    var mapStyle;
-    if (this.props.mapStyle instanceof Immutable.Map) {
-      mapStyle = this.props.mapStyle.toJS();
-    } else {
-      mapStyle = this.props.mapStyle;
-    }
-    var map = new mapboxgl.Map({
-      container: this.refs.mapboxMap,
-      center: [this.state.longitude, this.state.latitude],
-      zoom: this.state.zoom,
-      style: mapStyle,
-      interactive: false,
-      preserveDrawingBuffer: this.props.preserveDrawingBuffer
-      // ,
-      // attributionControl: this.props.attributionControl
-    });
-
-    d3.select(map.getCanvas()).style('outline', 'none');
-
-    this._map = map;
-    this._updateMapViewport();
-  },
-
-  componentWillUnmount: function componentWillUnmount() {
-    if (this._map) {
-      this._map.remove();
-    }
-  },
-
-  _updateMapViewport: function _updateMapViewport() {
-    var state = this.state;
-    if (state.latitude !== state.prevLatitude ||
-      state.longitude !== state.prevLongitude ||
-      state.zoom !== state.prevZoom
-    ) {
-      this._getMap().jumpTo({
-        center: [state.longitude, state.latitude],
-        zoom: state.zoom,
-        bearing: 0,
-        pitch: 0
-      });
-    }
-    if (state.width !== state.prevWidth || state.height !== state.prevHeight) {
-      this._resizeMap();
-    }
-  },
-
-  _resizeMap: function _resizeMap() {
-    var map = this._getMap();
-    map.resize();
-  },
-
-  _diffSources: function _diffSources(prevStyle, nextStyle) {
-    var prevSources = prevStyle.get('sources');
-    var nextSources = nextStyle.get('sources');
-    var enter = [];
-    var update = [];
-    var exit = [];
-    var prevIds = prevSources.keySeq().toArray();
-    var nextIds = nextSources.keySeq().toArray();
-    prevIds.forEach(function each(id) {
-      var nextSource = nextSources.get(id);
-      if (nextSource) {
-        if (!nextSource.equals(prevSources.get(id))) {
-          update.push({id: id, source: nextSources.get(id)});
+  // Update a source in the map style
+  _updateSource(map, update) {
+    const newSource = update.source.toJS();
+    if (newSource.type === 'geojson') {
+      const oldSource = map.getSource(update.id);
+      if (oldSource.type === 'geojson') {
+        // update data if no other GeoJSONSource options were changed
+        const oldOpts = oldSource.workerOptions;
+        if (
+          (newSource.maxzoom === undefined ||
+            newSource.maxzoom === oldOpts.geojsonVtOptions.maxZoom) &&
+          (newSource.buffer === undefined ||
+            newSource.buffer === oldOpts.geojsonVtOptions.buffer) &&
+          (newSource.tolerance === undefined ||
+            newSource.tolerance === oldOpts.geojsonVtOptions.tolerance) &&
+          (newSource.cluster === undefined ||
+            newSource.cluster === oldOpts.cluster) &&
+          (newSource.clusterRadius === undefined ||
+            newSource.clusterRadius === oldOpts.superclusterOptions.radius) &&
+          (newSource.clusterMaxZoom === undefined ||
+            newSource.clusterMaxZoom === oldOpts.superclusterOptions.maxZoom)
+        ) {
+          oldSource.setData(newSource.data);
+          return;
         }
-      } else {
-        exit.push({id: id, source: prevSources.get(id)});
       }
-    });
-    nextIds.forEach(function each(id) {
-      var prevSource = prevSources.get(id);
-      if (!prevSource) {
-        enter.push({id: id, source: nextSources.get(id)});
-      }
-    });
-    return {enter: enter, update: update, exit: exit};
-  },
+    }
 
-  _diffLayers: function _diffLayers(prevStyle, nextStyle) {
-    var prevLayers = prevStyle.get('layers');
-    var nextLayers = nextStyle.get('layers');
-    var updates = [];
-    var exiting = [];
-    var prevMap = {};
-    var nextMap = {};
-    nextLayers.forEach(function map(layer, index) {
-      var id = layer.get('id');
-      var layerImBehind = nextLayers.get(index + 1);
-      nextMap[id] = {
-        layer: layer,
-        id: id,
-        // The `id` of the layer before this one.
-        before: layerImBehind ? layerImBehind.get('id') : null,
-        enter: true
-      };
-    });
-    prevLayers.forEach(function map(layer, index) {
-      var id = layer.get('id');
-      var layerImBehind = prevLayers.get(index + 1);
-      prevMap[id] = {
-        layer: layer,
-        id: id,
-        before: layerImBehind ? layerImBehind.get('id') : null
-      };
-      if (nextMap[id]) {
-        // Not a new layer.
-        nextMap[id].enter = false;
-      } else {
-        // This layer is being removed.
-        exiting.push(prevMap[id]);
-      }
-    });
-    nextLayers.reverse().forEach(function map(layer) {
-      var id = layer.get('id');
-      if (
-        !prevMap[id] ||
-        !prevMap[id].layer.equals(nextMap[id].layer) ||
-        prevMap[id].before !== nextMap[id].before
-      ) {
-        // This layer is being changed.
-        updates.push(nextMap[id]);
-      }
-    });
-    return {updates: updates, exiting: exiting};
-  },
+    map.removeSource(update.id);
+    map.addSource(update.id, newSource);
+  }
 
   // Individually update the maps source and layers that have changed if all
   // other style props haven't changed. This prevents flicking of the map when
   // styles only change sources or layers.
-  _setDiffStyle: function _setDiffStyle(prevStyle, nextStyle) {
-    var map = this._getMap();
-    var prevKeysMap = prevStyle && styleKeysMap(prevStyle) || {};
-    var nextKeysMap = styleKeysMap(nextStyle);
+  /* eslint-disable max-statements, complexity */
+  _setDiffStyle(prevStyle, nextStyle) {
+    const prevKeysMap = prevStyle && styleKeysMap(prevStyle) || {};
+    const nextKeysMap = styleKeysMap(nextStyle);
     function styleKeysMap(style) {
-      return style.map(function _map() {
-        return true;
-      }).delete('layers').delete('sources').toJS();
+      return style.map(() => true).delete('layers').delete('sources').toJS();
     }
     function propsOtherThanLayersOrSourcesDiffer() {
-      var prevKeysList = Object.keys(prevKeysMap);
-      var nextKeysList = Object.keys(nextKeysMap);
+      const prevKeysList = Object.keys(prevKeysMap);
+      const nextKeysList = Object.keys(nextKeysMap);
       if (prevKeysList.length !== nextKeysList.length) {
         return true;
       }
       // `nextStyle` and `prevStyle` should not have the same set of props.
-      if (nextKeysList.some(function forEach(key) {
+      if (nextKeysList.some(
+        key => prevStyle.get(key) !== nextStyle.get(key)
         // But the value of one of those props is different.
-        return prevStyle.get(key) !== nextStyle.get(key);
-      })) {
+      )) {
         return true;
       }
       return false;
     }
+
+    const map = this._map;
 
     if (!prevStyle || propsOtherThanLayersOrSourcesDiffer()) {
       map.setStyle(nextStyle.toJS());
       return;
     }
 
-    var sourcesDiff = this._diffSources(prevStyle, nextStyle);
-    var layersDiff = this._diffLayers(prevStyle, nextStyle);
+    const {sourcesDiff, layersDiff} = diffStyles(prevStyle, nextStyle);
 
     // TODO: It's rather difficult to determine style diffing in the presence
     // of refs. For now, if any style update has a ref, fallback to no diffing.
     // We can come back to this case if there's a solid usecase.
-    if (layersDiff.updates.some(function updatedNodeHasRef(node) {
-      return node.layer.get('ref');
-    })) {
+    if (layersDiff.updates.some(node => node.layer.get('ref'))) {
       map.setStyle(nextStyle.toJS());
       return;
     }
 
-    map.batch(function batchStyleUpdates(batch) {
-      sourcesDiff.enter.forEach(function each(enter) {
-        batch.addSource(enter.id, enter.source.toJS());
-      });
-      sourcesDiff.update.forEach(function each(update) {
-        batch.removeSource(update.id);
-        batch.addSource(update.id, update.source.toJS());
-      });
-      sourcesDiff.exit.forEach(function each(exit) {
-        batch.removeSource(exit.id);
-      });
-      layersDiff.exiting.forEach(function forEach(exit) {
-        if (map.style.getLayer(exit.id)) {
-          batch.removeLayer(exit.id);
-        }
-      });
-      layersDiff.updates.forEach(function forEach(update) {
-        if (!update.enter) {
-          // This is an old layer that needs to be updated. Remove the old layer
-          // with the same id and add it back again.
-          batch.removeLayer(update.id);
-        }
-        batch.addLayer(update.layer.toJS(), update.before);
-      });
-    });
-  },
-
-  _updateMapStyle: function _updateMapStyle() {
-    var mapStyle = this.state.mapStyle;
-    if (mapStyle !== this.state.prevMapStyle) {
-      if (mapStyle instanceof Immutable.Map) {
-        if (this.props.preventStyleDiffing) {
-          this._getMap().setStyle(mapStyle.toJS());
-        } else {
-          this._setDiffStyle(this.state.prevMapStyle, mapStyle);
-        }
-      } else {
-        this._getMap().setStyle(mapStyle);
+    for (const enter of sourcesDiff.enter) {
+      map.addSource(enter.id, enter.source.toJS());
+    }
+    for (const update of sourcesDiff.update) {
+      this._updateSource(map, update);
+    }
+    for (const exit of sourcesDiff.exit) {
+      map.removeSource(exit.id);
+    }
+    for (const exit of layersDiff.exiting) {
+      if (map.style.getLayer(exit.id)) {
+        map.removeLayer(exit.id);
       }
     }
-  },
+    for (const update of layersDiff.updates) {
+      if (!update.enter) {
+        // This is an old layer that needs to be updated. Remove the old layer
+        // with the same id and add it back again.
+        map.removeLayer(update.id);
+      }
+      map.addLayer(update.layer.toJS(), update.before);
+    }
+  }
+  /* eslint-enable max-statements, complexity */
 
-  componentDidUpdate: function componentDidUpdate() {
-    this._updateMapViewport();
-    this._updateMapStyle();
-  },
+  _updateMapStyle(oldProps, newProps) {
+    const mapStyle = newProps.mapStyle;
+    const oldMapStyle = oldProps.mapStyle;
+    if (mapStyle !== oldMapStyle) {
+      if (Immutable.Map.isMap(mapStyle)) {
+        if (this.props.preventStyleDiffing) {
+          this._map.setStyle(mapStyle.toJS());
+        } else {
+          this._setDiffStyle(oldMapStyle, mapStyle);
+        }
+      } else {
+        this._map.setStyle(mapStyle);
+      }
+      this._updateQueryParams(mapStyle);
+    }
+  }
 
-  _onMouseDown: function _onMouseDown(opt) {
-    var map = this._getMap();
-    var lngLat = unprojectFromTransform(map.transform, opt.pos);
-    this._onChangeViewport({
+  _updateMapViewport(oldProps, newProps) {
+    const viewportChanged =
+      newProps.latitude !== oldProps.latitude ||
+      newProps.longitude !== oldProps.longitude ||
+      newProps.zoom !== oldProps.zoom ||
+      newProps.pitch !== oldProps.pitch ||
+      newProps.zoom !== oldProps.bearing ||
+      newProps.altitude !== oldProps.altitude;
+
+    if (viewportChanged) {
+      this._map.jumpTo({
+        center: [newProps.longitude, newProps.latitude],
+        zoom: newProps.zoom,
+        bearing: newProps.bearing,
+        pitch: newProps.pitch
+      });
+
+      // TODO - jumpTo doesn't handle altitude
+      if (newProps.altitude !== oldProps.altitude) {
+        this._map.transform.altitude = newProps.altitude;
+      }
+    }
+  }
+
+  // Note: needs to be called after render (e.g. in componentDidUpdate)
+  _updateMapSize(oldProps, newProps) {
+    const sizeChanged =
+      oldProps.width !== newProps.width || oldProps.height !== newProps.height;
+
+    if (sizeChanged) {
+      this._map.resize();
+      this._callOnChangeViewport(this._map.transform);
+    }
+  }
+
+  // Calculates a new pitch and bearing from a position (coming from an event)
+  _calculateNewPitchAndBearing({pos, startPos, startBearing, startPitch}) {
+    const xDelta = pos[0] - startPos[0];
+    const bearing = startBearing + 180 * xDelta / this.props.width;
+
+    let pitch = startPitch;
+    const yDelta = pos[1] - startPos[1];
+    if (yDelta > 0) {
+      // Dragging downwards, gradually decrease pitch
+      if (Math.abs(this.props.height - startPos[1]) > PITCH_MOUSE_THRESHOLD) {
+        const scale = yDelta / (this.props.height - startPos[1]);
+        pitch = (1 - scale) * PITCH_ACCEL * startPitch;
+      }
+    } else if (yDelta < 0) {
+      // Dragging upwards, gradually increase pitch
+      if (startPos[1] > PITCH_MOUSE_THRESHOLD) {
+        // Move from 0 to 1 as we drag upwards
+        const yScale = 1 - pos[1] / startPos[1];
+        // Gradually add until we hit max pitch
+        pitch = startPitch + yScale * (MAX_PITCH - startPitch);
+      }
+    }
+
+    // console.debug(startPitch, pitch);
+    return {
+      pitch: Math.max(Math.min(pitch, MAX_PITCH), 0),
+      bearing
+    };
+  }
+
+   // Helper to call props.onChangeViewport
+  _callOnChangeViewport(transform, opts = {}) {
+    if (this.props.onChangeViewport) {
+      this.props.onChangeViewport({
+        latitude: transform.center.lat,
+        longitude: mod(transform.center.lng + 180, 360) - 180,
+        zoom: transform.zoom,
+        pitch: transform.pitch,
+        bearing: mod(transform.bearing + 180, 360) - 180,
+
+        isDragging: this.props.isDragging,
+        startDragLngLat: this.props.startDragLngLat,
+        startBearing: this.props.startBearing,
+        startPitch: this.props.startPitch,
+
+        ...opts
+      });
+    }
+  }
+
+  @autobind _onTouchStart(opts) {
+    this._onMouseDown(opts);
+  }
+
+  @autobind _onTouchDrag(opts) {
+    this._onMouseDrag(opts);
+  }
+
+  @autobind _onTouchRotate(opts) {
+    this._onMouseRotate(opts);
+  }
+
+  @autobind _onTouchEnd(opts) {
+    this._onMouseUp(opts);
+  }
+
+  @autobind _onTouchTap(opts) {
+    this._onMouseClick(opts);
+  }
+
+  @autobind _onMouseDown({pos}) {
+    const {transform} = this._map;
+    const {lng, lat} = unprojectFromTransform(transform, new Point(...pos));
+    this._callOnChangeViewport(transform, {
       isDragging: true,
-      startDragLngLat: [lngLat.lng, lngLat.lat]
+      startDragLngLat: [lng, lat],
+      startBearing: transform.bearing,
+      startPitch: transform.pitch
     });
-  },
+  }
 
-  _onMouseDrag: function _onMouseDrag(opt) {
+  @autobind _onMouseDrag({pos}) {
     if (!this.props.onChangeViewport) {
       return;
     }
-    var p2 = opt.pos;
-    var map = this._getMap();
-    // take the start lnglat and put it where the mouse is down.
-    var transform = cloneTransform(map.transform);
-    assert(this.state.startDragLngLat, '`startDragLngLat` prop is required ' +
-      'for mouse drag behavior to calculate where to position the map.');
-    transform.setLocationAtPoint(this.state.startDragLngLat, p2);
-    this._onChangeViewport({
-      latitude: transform.center.lat,
-      longitude: transform.center.lng,
-      zoom: transform.zoom,
-      isDragging: true
-    });
-  },
 
-  _onMouseMove: function _onMouseMove(opt) {
-    var map = this._getMap();
-    var pos = opt.pos;
+    // take the start lnglat and put it where the mouse is down.
+    assert(this.props.startDragLngLat, '`startDragLngLat` prop is required ' +
+      'for mouse drag behavior to calculate where to position the map.');
+
+    const transform = cloneTransform(this._map.transform);
+    const [lng, lat] = this.props.startDragLngLat;
+    transform.setLocationAtPoint({lng, lat}, new Point(...pos));
+    this._callOnChangeViewport(transform, {isDragging: true});
+  }
+
+  @autobind _onMouseRotate({pos, startPos}) {
+    if (!this.props.onChangeViewport || !this.props.perspectiveEnabled) {
+      return;
+    }
+
+    const {startBearing, startPitch} = this.props;
+    assert(typeof startBearing === 'number',
+      '`startBearing` prop is required for mouse rotate behavior');
+    assert(typeof startPitch === 'number',
+      '`startPitch` prop is required for mouse rotate behavior');
+
+    const {pitch, bearing} = this._calculateNewPitchAndBearing({
+      pos,
+      startPos,
+      startBearing,
+      startPitch
+    });
+
+    const transform = cloneTransform(this._map.transform);
+    transform.bearing = bearing;
+    transform.pitch = pitch;
+
+    this._callOnChangeViewport(transform, {isDragging: true});
+  }
+
+  @autobind _onMouseMove({pos}) {
     if (!this.props.onHoverFeatures) {
       return;
     }
-    var features = map.queryRenderedFeatures([pos.x, pos.y]);
+    const features = this._map.queryRenderedFeatures(new Point(...pos), this._queryParams);
     if (!features.length && this.props.ignoreEmptyFeatures) {
       return;
     }
+    this.setState({isHovering: features.length > 0});
     this.props.onHoverFeatures(features);
-  },
+  }
 
-  _onMouseUp: function _onMouseUp(opt) {
-    var map = this._getMap();
-    var transform = cloneTransform(map.transform);
-
-    this._onChangeViewport({
-      latitude: transform.center.lat,
-      longitude: transform.center.lng,
-      zoom: transform.zoom,
-      isDragging: false
+  @autobind _onMouseUp(opt) {
+    this._callOnChangeViewport(this._map.transform, {
+      isDragging: false,
+      startDragLngLat: null,
+      startBearing: null,
+      startPitch: null
     });
+  }
 
-    if (!this.props.onClickFeatures) {
+  @autobind _onMouseClick({pos}) {
+    if (!this.props.onClickFeatures && !this.props.onClick) {
       return;
     }
 
-    var pos = opt.pos;
-
-    // Radius enables point features, like marker symbols, to be clicked.
-    var size = 15;
-    var bbox = [[pos.x - size, pos.y - size], [pos.x + size, pos.y + size]];
-    var features = map.queryRenderedFeatures(bbox);
-    if (!features.length && this.props.ignoreEmptyFeatures) {
-      return;
+    if (this.props.onClick) {
+      const point = new Point(...pos);
+      const latLong = this._map.unproject(point);
+      // TODO - Do we really want to expose a mapbox "Point" in our interface?
+      this.props.onClick(latLong, point);
     }
-    this.props.onClickFeatures(features);
-  },
 
-  _onZoom: function _onZoom(opt) {
-    var map = this._getMap();
-    var transform = cloneTransform(map.transform);
-    var around = unprojectFromTransform(transform, opt.pos);
-    transform.zoom = transform.scaleZoom(map.transform.scale * opt.scale);
-    transform.setLocationAtPoint(around, opt.pos);
-    this._onChangeViewport({
-      latitude: transform.center.lat,
-      longitude: transform.center.lng,
-      zoom: transform.zoom,
-      isDragging: true
-    });
-  },
+    if (this.props.onClickFeatures) {
+      // Radius enables point features, like marker symbols, to be clicked.
+      const size = this.props.clickRadius;
+      const bbox = [[pos[0] - size, pos[1] - size], [pos[0] + size, pos[1] + size]];
+      const features = this._map.queryRenderedFeatures(bbox, this._queryParams);
+      if (!features.length && this.props.ignoreEmptyFeatures) {
+        return;
+      }
+      this.props.onClickFeatures(features);
+    }
+  }
 
-  _onZoomEnd: function _onZoomEnd() {
-    this._onChangeViewport({isDragging: false});
-  },
+  @autobind _onZoom({pos, scale}) {
+    const point = new Point(...pos);
+    const transform = cloneTransform(this._map.transform);
+    const around = unprojectFromTransform(transform, point);
+    transform.zoom = transform.scaleZoom(this._map.transform.scale * scale);
+    transform.setLocationAtPoint(around, point);
+    this._callOnChangeViewport(transform, {isDragging: true});
+  }
 
-  render: function render() {
-    var props = this.props;
-    var style = assign({}, props.style, {
-      width: props.width,
-      height: props.height,
-      cursor: this._cursor()
-    });
+  @autobind _onZoomEnd() {
+    this._callOnChangeViewport(this._map.transform, {isDragging: false});
+  }
 
-    var transform = new Transform();
-    transform.width = props.width;
-    transform.height = props.height;
-    transform.zoom = this.props.zoom;
-    transform.center.lat = this.props.latitude;
-    transform.center.lng = this.props.longitude;
+  render() {
+    const {className, width, height, style} = this.props;
+    const mapStyle = {
+      ...style,
+      width,
+      height,
+      cursor: this._getCursor()
+    };
 
-    var content = [
-      r.div({ref: 'mapboxMap', style: style, className: props.className}),
-      r.div({
-        className: 'overlays',
-        style: {position: 'absolute', left: 0, top: 0}
-      }, this.props.children)
+    let content = [
+      <div key="map" ref="mapboxMap"
+        style={ mapStyle } className={ className }/>,
+      <div key="overlays" className="overlays"
+        style={ {position: 'absolute', left: 0, top: 0} }>
+        { this.props.children }
+      </div>
     ];
 
-    if (this.props.onChangeViewport) {
-      content = [
-        r(MapInteractions, {
-          onMouseDown: this._onMouseDown,
-          onMouseDrag: this._onMouseDrag,
-          onMouseUp: this._onMouseUp,
-          onMouseMove: this._onMouseMove,
-          onZoom: this._onZoom,
-          onZoomEnd: this._onZoomEnd,
-          width: this.props.width,
-          height: this.props.height
-        }, content)
-      ];
+    if (this.state.isSupported && this.props.onChangeViewport) {
+      content = (
+        <MapInteractions
+          onMouseDown ={ this._onMouseDown }
+          onMouseDrag ={ this._onMouseDrag }
+          onMouseRotate ={ this._onMouseRotate }
+          onMouseUp ={ this._onMouseUp }
+          onMouseMove ={ this._onMouseMove }
+          onMouseClick = { this._onMouseClick }
+          onTouchStart ={ this._onTouchStart }
+          onTouchDrag ={ this._onTouchDrag }
+          onTouchRotate ={ this._onTouchRotate }
+          onTouchEnd ={ this._onTouchEnd }
+          onTouchTap = { this._onTouchTap }
+          onZoom ={ this._onZoom }
+          onZoomEnd ={ this._onZoomEnd }
+          width ={ this.props.width }
+          height ={ this.props.height }>
+
+          { content }
+
+        </MapInteractions>
+      );
     }
 
-    return r.div({
-      style: assign({}, this.props.style, {
-        width: this.props.width,
-        height: this.props.height,
-        position: 'relative'
-      })
-    }, content);
+    return (
+      <div
+        style={ {
+          ...this.props.style,
+          width: this.props.width,
+          height: this.props.height,
+          position: 'relative'
+        } }>
+
+        { content }
+
+      </div>
+    );
   }
-});
-
-MapGL.fitBounds = function fitBounds(width, height, _bounds, options) {
-  var bounds = new LngLatBounds([_bounds[0].reverse(), _bounds[1].reverse()]);
-  options = options || {};
-  var padding = typeof options.padding === 'undefined' ? 0 : options.padding;
-  var offset = Point.convert([0, 0]);
-  var tr = new Transform();
-  tr.width = width;
-  tr.height = height;
-  var nw = tr.project(bounds.getNorthWest());
-  var se = tr.project(bounds.getSouthEast());
-  var size = se.sub(nw);
-  var scaleX = (tr.width - padding * 2 - Math.abs(offset.x) * 2) / size.x;
-  var scaleY = (tr.height - padding * 2 - Math.abs(offset.y) * 2) / size.y;
-
-  var center = tr.unproject(nw.add(se).div(2));
-  var zoom = tr.scaleZoom(tr.scale * Math.min(scaleX, scaleY));
-  return {
-    latitude: center.lat,
-    longitude: center.lng,
-    zoom: zoom
-  };
-};
-
-module.exports = MapGL;
+}

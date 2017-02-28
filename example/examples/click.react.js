@@ -18,20 +18,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+import window from 'global/window';
+const windowAlert = window.alert;
+
 import React, {PropTypes, Component} from 'react';
+import autobind from 'autobind-decorator';
 
 import MapGL from '../../src';
 
-// San Francisco
-import ZIPCODES_SF from './../data/feature-example-sf.json';
-import CITIES from './../data/cities.json';
-const location = CITIES[0];
-
-for (const feature of ZIPCODES_SF.features) {
-  feature.properties.value = Math.random() * 1000;
-}
-
-export default class NotInteractiveExample extends Component {
+export default class ClickExample extends Component {
 
   static propTypes = {
     width: PropTypes.number.isRequired,
@@ -42,14 +37,43 @@ export default class NotInteractiveExample extends Component {
     super(props);
     this.state = {
       viewport: {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        zoom: 11
+        latitude: 37.7736092599127,
+        longitude: -122.42312591099463,
+        zoom: 12.011557070552028,
+        startDragLngLat: null,
+        isDragging: false
       }
     };
   }
 
+  @autobind
+  _onChangeViewport(viewport) {
+    this.setState({viewport});
+  }
+
+  @autobind
+  _onClickFeatures(features) {
+    const placeNames = features
+      .filter(feature => feature.layer['source-layer'] === 'place_label')
+      .map(feature => feature.properties.name);
+    windowAlert(placeNames);
+  }
+
+  @autobind
+  _onClick(coordinates, pos) {
+    windowAlert(`${coordinates}\n${JSON.stringify(pos)}`);
+  }
+
   render() {
-    return <MapGL { ...this.state.viewport } { ...this.props }/>;
+    const viewport = {
+      ...this.state.viewport,
+      ...this.props
+    };
+    return (
+      <MapGL { ...viewport }
+        onChangeViewport={ this._onChangeViewport }
+        onClickFeatures={ this._onClickFeatures }
+        onClick={ this._onClick }/>
+    );
   }
 }

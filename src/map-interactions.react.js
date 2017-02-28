@@ -17,103 +17,216 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
-'use strict';
 
-var React = require('react');
-var MapboxGL = require('mapbox-gl');
-var Point = MapboxGL.Point;
-var document = require('global/document');
-var window = require('global/window');
-var r = require('r-dom');
-var noop = require('./noop');
-
-var ua = typeof window.navigator !== 'undefined' ?
-  window.navigator.userAgent.toLowerCase() : '';
-var firefox = ua.indexOf('firefox') !== -1;
-
-function mousePos(el, event) {
-  var rect = el.getBoundingClientRect();
-  event = event.touches ? event.touches[0] : event;
-  return new Point(
-    event.clientX - rect.left - el.clientLeft,
-    event.clientY - rect.top - el.clientTop
-  );
-}
-
-/* eslint-disable max-len */
 // Portions of the code below originally from:
 // https://github.com/mapbox/mapbox-gl-js/blob/master/js/ui/handler/scroll_zoom.js
-/* eslint-enable max-len */
+import React, {PropTypes, Component} from 'react';
+import autobind from 'autobind-decorator';
+import document from 'global/document';
+import window from 'global/window';
 
-var MapInteractions = React.createClass({
+function noop() {}
 
-  displayName: 'MapInteractions',
+const ua = typeof window.navigator !== 'undefined' ?
+  window.navigator.userAgent.toLowerCase() : '';
+const firefox = ua.indexOf('firefox') !== -1;
 
-  PropTypes: {
-    width: React.PropTypes.number.isRequired,
-    height: React.PropTypes.number.isRequired,
-    onMouseDown: React.PropTypes.func,
-    onMouseDrag: React.PropTypes.func,
-    onMouseUp: React.PropTypes.func,
-    onZoom: React.PropTypes.func,
-    onZoomEnd: React.PropTypes.func
-  },
+// Extract a position from a mouse event
+function getMousePosition(el, event) {
+  const rect = el.getBoundingClientRect();
+  event = event.touches ? event.touches[0] : event;
+  return [
+    event.clientX - rect.left - el.clientLeft,
+    event.clientY - rect.top - el.clientTop
+  ];
+}
 
-  getDefaultProps: function getDefaultProps() {
-    return {
-      onMouseDown: noop,
-      onMouseDrag: noop,
-      onMouseUp: noop,
-      onZoom: noop,
-      onZoomEnd: noop
-    };
-  },
+// Extract an array of touch positions from a touch event
+function getTouchPositions(el, event) {
+  const points = [];
+  const rect = el.getBoundingClientRect();
+  const touches = getTouches(event);
+  for (let i = 0; i < touches.length; i++) {
+    points.push([
+      touches[i].clientX - rect.left - el.clientLeft,
+      touches[i].clientY - rect.top - el.clientTop
+    ]);
+  }
+  return points;
+}
 
-  getInitialState: function getInitialState() {
-    return {
+// Get relevant touches from event depending on event type (for `touchend` and
+// `touchcancel` the property `changedTouches` contains the relevant coordinates)
+function getTouches(event) {
+  const type = event.type;
+  if (type === 'touchend' || type === 'touchcancel') {
+    return event.changedTouches;
+  }
+  return event.touches;
+}
+
+// Return the centroid of an array of points
+function centroid(positions) {
+  const sum = positions.reduce(
+    (acc, elt) => [acc[0] + elt[0], acc[1] + elt[1]],
+    [0, 0]
+  );
+  return [sum[0] / positions.length, sum[1] / positions.length];
+}
+
+export default class Interactions extends Component {
+
+  static displayName = 'Interactions';
+
+  static propTypes = {
+    width: PropTypes.number.isRequired,
+    height: PropTypes.number.isRequired,
+    onMouseDown: PropTypes.func,
+    onMouseDrag: PropTypes.func,
+    onMouseRotate: PropTypes.func,
+    onMouseUp: PropTypes.func,
+    onMouseMove: PropTypes.func,
+    onMouseClick: PropTypes.func,
+    onTouchStart: PropTypes.func,
+    onTouchDrag: PropTypes.func,
+    onTouchRotate: PropTypes.func,
+    onTouchEnd: PropTypes.func,
+    onTouchTap: PropTypes.func,
+    onZoom: PropTypes.func,
+    onZoomEnd: PropTypes.func
+  };
+
+  static defaultProps = {
+    onMouseDown: noop,
+    onMouseDrag: noop,
+    onMouseRotate: noop,
+    onMouseUp: noop,
+    onMouseMove: noop,
+    onMouseClick: noop,
+    onTouchStart: noop,
+    onTouchDrag: noop,
+    onTouchRotate: noop,
+    onTouchEnd: noop,
+    onTouchTap: noop,
+    onZoom: noop,
+    onZoomEnd: noop
+  };
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      didDrag: false,
+      isFunctionKeyPressed: false,
       startPos: null,
       pos: null,
       mouseWheelPos: null
     };
-  },
+  }
 
-  _getMousePos: function _getMousePos(event) {
-    var el = this.refs.container;
-    return mousePos(el, event);
-  },
+  _getMousePos(event) {
+    const el = this.refs.container;
+    return getMousePosition(el, event);
+  }
 
-  _onMouseDown: function _onMouseDown(event) {
-    var pos = this._getMousePos(event);
-    this.setState({startPos: pos, pos: pos});
-    this.props.onMouseDown({pos: pos});
+  _getTouchPos(event) {
+    const el = this.refs.container;
+    const positions = getTouchPositions(el, event);
+    return centroid(positions);
+  }
+
+  _isFunctionKeyPressed(event) {
+    return Boolean(event.metaKey || event.altKey ||
+      event.ctrlKey || event.shiftKey);
+  }
+
+  @autobind
+  _onMouseDown(event) {
+    const pos = this._getMousePos(event);
+    this.setState({
+      didDrag: false,
+      startPos: pos,
+      pos,
+      isFunctionKeyPressed: this._isFunctionKeyPressed(event)
+    });
+    this.props.onMouseDown({pos});
     document.addEventListener('mousemove', this._onMouseDrag, false);
     document.addEventListener('mouseup', this._onMouseUp, false);
-  },
+  }
 
-  _onMouseDrag: function _onMouseDrag(event) {
-    var pos = this._getMousePos(event);
-    this.setState({pos: pos});
-    this.props.onMouseDrag({pos: pos});
-  },
+  @autobind
+  _onTouchStart(event) {
+    const pos = this._getTouchPos(event);
+    this.setState({
+      didDrag: false,
+      startPos: pos,
+      pos,
+      isFunctionKeyPressed: this._isFunctionKeyPressed(event)
+    });
+    this.props.onTouchStart({pos});
+    document.addEventListener('touchmove', this._onTouchDrag, false);
+    document.addEventListener('touchend', this._onTouchEnd, false);
+  }
 
-  _onMouseUp: function _onMouseUp(event) {
+  @autobind
+  _onMouseDrag(event) {
+    const pos = this._getMousePos(event);
+    this.setState({pos, didDrag: true});
+    if (this.state.isFunctionKeyPressed) {
+      const {startPos} = this.state;
+      this.props.onMouseRotate({pos, startPos});
+    } else {
+      this.props.onMouseDrag({pos});
+    }
+  }
+
+  @autobind
+  _onTouchDrag(event) {
+    const pos = this._getTouchPos(event);
+    this.setState({pos, didDrag: true});
+    if (this.state.isFunctionKeyPressed) {
+      const {startPos} = this.state;
+      this.props.onTouchRotate({pos, startPos});
+    } else {
+      this.props.onTouchDrag({pos});
+    }
+    event.preventDefault();
+  }
+
+  @autobind
+  _onMouseUp(event) {
     document.removeEventListener('mousemove', this._onMouseDrag, false);
     document.removeEventListener('mouseup', this._onMouseUp, false);
-    var pos = this._getMousePos(event);
-    this.setState({pos: pos});
-    this.props.onMouseUp({pos: pos});
-  },
+    const pos = this._getMousePos(event);
+    this.setState({pos});
+    this.props.onMouseUp({pos});
+    if (!this.state.didDrag) {
+      this.props.onMouseClick({pos});
+    }
+  }
 
-  _onMouseMove: function _onMouseMove(event) {
-    var pos = this._getMousePos(event);
-    this.props.onMouseMove({pos: pos});
-  },
+  @autobind
+  _onTouchEnd(event) {
+    document.removeEventListener('touchmove', this._onTouchDrag, false);
+    document.removeEventListener('touchend', this._onTouchEnd, false);
+    const pos = this._getTouchPos(event);
+    this.setState({pos});
+    this.props.onTouchEnd({pos});
+    if (!this.state.didDrag) {
+      this.props.onTouchTap({pos});
+    }
+  }
+
+  @autobind
+  _onMouseMove(event) {
+    const pos = this._getMousePos(event);
+    this.props.onMouseMove({pos});
+  }
 
   /* eslint-disable complexity, max-statements */
-  _onWheel: function _onWheel(event) {
-    event.stopPropagation();
+  @autobind
+  _onWheel(event) {
     event.preventDefault();
-    var value = event.deltaY;
+    let value = event.deltaY;
     // Firefox doubles the values on retina screens...
     if (firefox && event.deltaMode === window.WheelEvent.DOM_DELTA_PIXEL) {
       value /= window.devicePixelRatio;
@@ -122,15 +235,15 @@ var MapInteractions = React.createClass({
       value *= 40;
     }
 
-    var type = this.state.mouseWheelType;
-    var timeout = this.state.mouseWheelTimeout;
-    var lastValue = this.state.mouseWheelLastValue;
-    var time = this.state.mouseWheelTime;
+    let type = this.state.mouseWheelType;
+    let timeout = this.state.mouseWheelTimeout;
+    let lastValue = this.state.mouseWheelLastValue;
+    let time = this.state.mouseWheelTime;
 
-    var now = (window.performance || Date).now();
-    var timeDelta = now - (time || 0);
+    const now = (window.performance || Date).now();
+    const timeDelta = now - (time || 0);
 
-    var pos = this._getMousePos(event);
+    const pos = this._getMousePos(event);
     time = now;
 
     if (value !== 0 && value % 4.000244140625 === 0) {
@@ -149,7 +262,7 @@ var MapInteractions = React.createClass({
       // Start a timeout in case this was a singular event, and delay it by up
       // to 40ms.
       timeout = window.setTimeout(function setTimeout() {
-        var _type = 'wheel';
+        const _type = 'wheel';
         this._zoom(-this.state.mouseWheelLastValue, this.state.mouseWheelPos);
         this.setState({mouseWheelType: _type});
       }.bind(this), 40);
@@ -187,36 +300,40 @@ var MapInteractions = React.createClass({
       mouseWheelTimeout: timeout,
       mouseWheelLastValue: lastValue
     });
-  },
+  }
   /* eslint-enable complexity, max-statements */
 
-  _zoom: function _zoom(delta, pos) {
-
+  _zoom(delta, pos) {
     // Scale by sigmoid of scroll wheel delta.
-    var scale = 2 / (1 + Math.exp(-Math.abs(delta / 100)));
+    let scale = 2 / (1 + Math.exp(-Math.abs(delta / 100)));
     if (delta < 0 && scale !== 0) {
       scale = 1 / scale;
     }
-    this.props.onZoom({pos: pos, scale: scale});
+    this.props.onZoom({pos, scale});
     window.clearTimeout(this._zoomEndTimeout);
     this._zoomEndTimeout = window.setTimeout(function _setTimeout() {
       this.props.onZoomEnd();
     }.bind(this), 200);
-  },
-
-  render: function render() {
-    return r.div({
-      ref: 'container',
-      onMouseMove: this._onMouseMove,
-      onMouseDown: this._onMouseDown,
-      onWheel: this._onWheel,
-      style: {
-        width: this.props.width,
-        height: this.props.height,
-        position: 'relative'
-      }
-    }, this.props.children);
   }
-});
 
-module.exports = MapInteractions;
+  render() {
+    return (
+      <div
+        ref="container"
+        onMouseMove={ this._onMouseMove }
+        onMouseDown={ this._onMouseDown }
+        onTouchStart={ this._onTouchStart }
+        onContextMenu={ this._onMouseDown }
+        onWheel={ this._onWheel }
+        style={ {
+          width: this.props.width,
+          height: this.props.height,
+          position: 'relative'
+        } }>
+
+        { this.props.children }
+
+      </div>
+    );
+  }
+}

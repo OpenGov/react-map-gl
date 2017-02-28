@@ -1,46 +1,63 @@
-# react-map-gl
+<p align="right">
+  <a href="https://npmjs.org/package/react-map-gl">
+    <img src="https://img.shields.io/npm/v/react-map-gl.svg?style=flat-square" alt="version" />
+  </a>
+  <a href="https://travis-ci.org/uber/react-map-gl">
+    <img src="https://img.shields.io/travis/uber/react-map-gl/master.svg?style=flat-square" alt="build" />
+  </a>
+  <a href="https://npmjs.org/package/react-map-gl">
+    <img src="https://img.shields.io/npm/dm/react-map-gl.svg?style=flat-square" alt="downloads" />
+  </a>
+</p>
 
-react-map-gl provides a [React](http://facebook.github.io/react/) friendly
-API wrapper around [Mapbox GL JS](https://www.mapbox.com/mapbox-gl-js/). A webGL
-based vector tile mapping library.
+<h1 align="center">react-map-gl | <a href="https://uber.github.io/react-map-gl">Docs</a></h1>
 
-WARNING: This project is new and the API may change. There also may be Mapbox
-APIs that haven't yet been exposed.
+<h5 align="center">React friendly API wrapper around MapboxGL JS</h5>
 
-![react-map-gl-screenshots](https://cloud.githubusercontent.com/assets/499192/11028165/49f41da2-86bc-11e5-85eb-9279621ef971.png)
+![screen](https://cloud.githubusercontent.com/assets/499192/11028165/49f41da2-86bc-11e5-85eb-9279621ef971.png)
 
-See the interactive docs at: https://uber.github.io/react-map-gl
+*This project is new and the API may change.*
 
-## Overview
+    npm install --save react-map-gl
 
-### Installation
+## Using with Browserify, Webpack etc
 
-```
-npm install react-map-gl --save
-```
+* `browserify` - react-map-gl is extensively tested with `browserify` and works without configuration.
 
-### Usage
+* `webpack 1` - look at the [deck.gl exhibits](https://github.com/uber/deck.gl/tree/master/exhibits)
+folder, demonstrating a working demo using `webpack`.
 
-````js
-var MapGL = require('react-map-gl');
+* `webpack 2` - The dev branch in this repo is based on webpack 2, look at the webpack config file in the main example. 
 
-<MapGL width={400} height={400} latitude={37.7577} longitude={-122.4376}
-  zoom={8} onChangeViewport={(viewport) => {
-    var {latitude, longitude, zoom} = viewport;
+In general, for non-browserify based environments, make sure you have read the instructions on the
+[mapbox-gl-js README](https://github.com/mapbox/mapbox-gl-js#using-mapbox-gl-js-with-other-module-systems).
+
+## Example
+
+```js
+import MapGL from 'react-map-gl';
+
+<MapGL
+  width={400}
+  height={400}
+  latitude={37.7577}
+  longitude={-122.4376}
+  zoom={8}
+  onChangeViewport={viewport => {
+    const {latitude, longitude, zoom} = viewport;
     // Optionally call `setState` and use the state to update the map.
   }}
 />
-````
+```
 
-### Using overlays
+## Overlays
 
 react-map-gl provides an overlay API so you can use the built-in visualization
-overlays, or create your own. Here's an example of using the build in
-ScatterplotOverlay.
+overlays, or create your own.
 
-````js
-var ScatterplotOverlay = require('react-map-gl/src/overlays/scatterplot.react');
-// ...
+```js
+import {ScatterplotOverlay} from 'react-map-gl';
+
 <MapGL {...viewport}>
   <ScatterplotOverlay
     {...viewport}
@@ -48,182 +65,126 @@ var ScatterplotOverlay = require('react-map-gl/src/overlays/scatterplot.react');
     dotRadius={4}
     globalOpacity={1}
     compositeOperation="screen" />
-  // Add additional overlays here...
-])
-````
+</MapGL>
+```
 
-#### Built in overlays
+Built-in overlays are: `ChoroplethOverlay`, `ScatterplotOverlay`, `DraggablePointsOverlay`,
+`SVGOverlay` and `CanvasOverlay`.
 
-1. ChoroplethOverlay
-2. ScatterplotOverlay
-3. DraggablePointsOverlay
-4. SVGOverlay
-5. CanvasOverlay
+**These overlays are currently not compatible with perspective mode.**
 
-#### Third party overlays
+### deck.gl
 
-Other third party overlays can also be created. For example, the
+[deck.gl](https://github.com/uber/deck.gl) is a companion module to
+`react-map-gl` that provide a number of classic data visualization overlays
+(scatterplots, choropleths etc) implemented in WebGL. These overlays are
+suitable for large or dynamic data sets, or for use in perspective mode
+applications.
+
+### Third-party
+
+Third party overlays can also be created. For example, the
 [heatmap-overlay](https://github.com/vicapow/react-map-gl-heatmap-overlay) uses
 [webgl-heatmap](https://github.com/vicapow/webgl-heatmap) to create geographic
 heatmaps.
 
-![heatmap-example](https://cloud.githubusercontent.com/assets/499192/11028150/33f34640-86bc-11e5-9678-3fa1798394d5.gif)
+<img width=200 src="https://cloud.githubusercontent.com/assets/499192/11028150/33f34640-86bc-11e5-9678-3fa1798394d5.gif" />
 
-Example usage:
+```js
+import HeatmapOverlay from 'react-map-gl-heatmap-overlay';
+import cities from 'example-cities';
 
-````js
-var HeatmapOverlay = require('react-map-gl-heatmap-overlay');
-var cities = require('example-cities');
-// ...
-    render: function render() {
-      return <MapGL {...viewport}>
-        return <HeatmapOverlay locations={cities} {...viewport}/>
-      </MapGL>;
-    }
-````
+<MapGL {...viewport}>
+  <HeatmapOverlay locations={cities} {...viewport} />
+</MapGL>
+```
 
 Want to create and share your own overlay? Fork the
 [react-map-gl-example-overlay](https://github.com/vicapow/react-map-gl-example-overlay)
 project to get started.
 
+## Perspective Mode
 
-### ImmutableJS all the things
+Perspective mode is exposed using the `pitch` and `bearing` props
+(both default to `0`), which will show the map "tilted" `pitch` degrees
+(overhead being 0 degrees), looking towards `bearing` (0 degrees is north).
+
+In addition, the `perspectiveEnabled` prop (default: `false`)
+will activate mouse handlers that allow the user to change `pitch` and
+`bearing` using the mouse while holding down any function key {command, shift, ctrl, alt}.
+
+If `perspectiveEnabled` is not set to `true` then the user will not be able to
+change the pitch and bearing, which means that the default props will show
+an overhead map and only enable standard pan and zoom mouse actions on that map.
+
+**Considerations:**
+
+- Mapbox-gl-js limits the pitch to 60 degrees.
+- When using pitch, several additional fields are passed in the
+onViewportChange callback, make sure to pass all received props back to
+the component.
+- Not all overlays are compatible with perspective mode. For a set of overlays that
+do work with perspective mode, look at [deck.gl](https://github.com/uber/deck.gl).
+
+## Transitions
+
+`react-map-gl` does not expose the transition API for `mapbox-gl-js` since it is
+designed to be a stateless component.
+
+Instead it is recommended to use a separate module like
+[react-motion](https://github.com/chenglou/react-motion)
+to animate properties.
+
+```js
+<Motion style={{
+  latitude: spring(viewport.latitude, { stiffness: 170, damping: 26, precision: 0.000001 }),
+  longitude: spring(viewport.longitude, { stiffness: 170, damping: 26, precision: 0.000001 })
+}}>
+  {({ latitude, longitude }) => <MapGL
+    {...viewport}
+    latitude={latitude}
+    longitude={longitude}
+    mapStyle={mapboxStyle}
+  />}
+</Motion>
+```
+
+## ImmutableJS
 
 The `mapStyle` property of the `MapGL` as well as several of the built in
 overlay properties must be provided as
-[ImmutableJS](https://facebook.github.io/immutable-js/) objects. This allows
+[ImmutableJS](https://facebook.github.io/immutable-js) objects. This allows
 the library to be fast since computing changes to props only involves checking
 if the immutable objects are the same instance.
 
+## Redux
+
+If you're using redux, it is relatively simple to hook this component up to
+store state in the redux state tree. The simplest way is to take all
+properties passed to the `onChangeViewport` function property and add them
+directly into the store. This state can then be passed back to `react-map-gl`
+without any transformation. You can use the package
+[redux-map-gl](https://github.com/Willyham/redux-map-gl) to save writing this
+code yourself.
 
 ## Development
 
-To develop on this component, install the dependencies and then build and watch
-the static files.
+Install project dependencies and start watching the examples:
 
-```bash
-$ npm install
-```
+    npm start
 
-To serve example app:
+You can now open your browser and navigate to `http://localhost:9966/?access_token=TOKEN`,
+where `TOKEN` is a valid Mapbox access token.
 
-```bash
-$ npm start &
-$ open "http://localhost:9966/?access_token="`echo $MapboxAccessToken`
-```
+## Testing
 
-Where `echo $MapboxAccessToken` returns your Mapbox access token.
+Its difficult to write tests for this component because it uses WebGL.
+There are some tests in the [test folder](./test) but for the most part, as new
+features are added, we typically test drive them by running `npm start` and
+play with the demos.
 
-Once complete, you can view the component in your browser at
-[localhost:9966](http://localhost:9966). Any changes you make will automatically
-run the compiler to build the files again.
+## Contributing
 
-### Testing
-
-It's particularly difficult to write tests for this component beacuse it uses WebGL. There are some tests in `test/` but for the most part, as new features are added, we typically test drive them by running `npm run start` and play with the demos.
-
-# CHANGE LOG
-
-### 0.6
-
-Support for React 0.14 as well as several other API changes
-
-### Breaking changes
-
-#### No longer provide viewport props transparently to overlay children.
-
-Require viewport props to be explicitly provided to overlays. Previously,
-viewport overlay props all had to be optional because the elements were created
-once and then cloned inside of `<MapGL>`. This also made it difficult to follow
-what props were being passed automatically to overlays. In addition, it meant
-that overlays could only be direct children of the `<MapGL>` element.
-
-This shouldn't require changes to overlays, other than marking viewport props
-as required. It will only involve passing the needed props explicitly to
-overlays.
-
-Old way:
-
-```js
-<MapGL {...viewport}>
-  <Overlay1 />
-  <Overlay2 />
-</MapGL>
-```
-
-New way:
-
-```js
-<MapGL {...viewport}>
-  <Overlay1 {...viewport}/>
-  <Overlay2 {...viewport}/>
-</MapGL>
-```
-
-For any third party overlay's that depend on `project` or `unproject` props,
-either update them to calculate the `project`/`unproject` functions from the
-viewport using the [ViewportMercatorProject](github.com/uber-common/viewport-mercator-project) module or provide them explicitly in the same render function as the
-`<MapGL/>` component. example:
-
-```js
-var ViewportMercator = require('viewport-mercator-project');
-// ...
-  render() {
-    var mercator = ViewportMercator(this.state.viewport);
-    return <MapGL ...viewport>
-      <Overlay1
-        project={mercator.project}
-        unproject={this.mercator.unproject
-        {...viewport}/>
-      {/* or equivalently */}
-      <Overlay2 {...mercator} {...viewport}/>
-    </MapGL>;
-  }
-</MapGL>
-```
-
-#### Swapping LatLng for LngLat
-
-This is more inline with
-[MapboxGL-js](https://github.com/mapbox/mapbox-gl-js/pull/1433) and GeoJSON.
-
-Accessors that were previously `latLngAccessor` are have been renamed to
-`lngLatAccessor`.
-
-Rename the viewport prop `startDragLatLng` to `startDragLngLat`.
-
-The `project` function prop passed to overlays now expecteds an array of
-the form `[longitude, latitude]` instead of `[latitude, longitude]`.
-
-The `project` function prop now returns an array of `[pixelX, pixelY]` instead
-of an object of the form `{x:pixelX, y: pixelY}`.
-
-The `unproject` function prop passed to overlays now returns an array of
-the form `[longitude, latitude]` instead of a MapboxGL
-[LngLat](https://www.mapbox.com/mapbox-gl-js/api/#LngLat) object.
-
-DraggablePointsOverlay's `locationAccessor` prop was renamed `lngLatAccessor`
-to be more consistent with other overlays.
-
-#### `bbox` property of the `onChangeViewport` event was removed
-
-This should be calculated instead using the [ViewportMercatorProject](github.com/uber-common/viewport-mercator-project) module instead.
-
-```js
-var mercator = ViewportMercator(viewport);
-var bbox = [mercator.unproject([0, 0]), mercator.unproject([width, height])];
-```
-
-### Non-breaking changes
-
-`unproject` was added to the arguments passed to the `redraw` callback in the
-`CanvasOverlay`.
-
-
-## Disclaimer
-
-This project is not affiliated with either Facebook or Mapbox.
-
-## Example Data
-
-1. SF GeoJSON data from: [SF OpenData](http://data.sfgov.org).
+Contributions are welcome. While not necessary, it can be helpful to check with
+maintainers before opening your PR. Also, you will need to complete a short open
+source contribution form before your pull request can be accepted.
