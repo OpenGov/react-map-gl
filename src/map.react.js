@@ -194,7 +194,7 @@ const DEFAULT_PROPS = {
 };
 
 const CHILD_CONTEXT_TYPES = {
-  map: React.PropTypes.object
+  map: PropTypes.object
 };
 
 @pureRender
