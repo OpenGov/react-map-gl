@@ -45,7 +45,7 @@
     "eslint-plugin-react": "^4.2.3",
     "immutable": "^3.7.6",
     "react": "16.3.2",
-    "react-dom": "16.3.2",
+    "react-dom": "16.13.0",
     "tape": "^4.5.1",
     "tape-catch": "^1.0.4",
     "uber-standard": "^5.1.0"
